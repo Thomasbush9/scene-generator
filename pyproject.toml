@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scene-generator"
+version = "0.1.0"
+description = "Synthetic scene generator for a referential-localization emergent-communication game (EGG)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Thomas Bush", email = "thomasbush52@gmail.com" }]
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "numpy",
+]
+
+[project.optional-dependencies]
+cli = ["pyyaml", "pillow"]  # --config YAML files and --preview PNGs
+dev = ["pytest", "pyyaml", "pillow"]
+
+[tool.setuptools.packages.find]
+include = ["scene_generator*"]
+exclude = ["scene_generator.tests*"]
