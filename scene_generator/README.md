@@ -50,18 +50,24 @@ from scene_generator import load_dataset
 sender = load_dataset("data/scenes_v1", "train", view="crop_classification",
                       attributes=("shape", "color"))
 
-# Receiver: classify every object in the full scene by grid cell
+# Receiver (grid layouts): classify every object in the full scene by grid cell
 # -> (scene, {"shape": LongTensor(16,), "color": LongTensor(16,)})
 # Empty cells get the extra "empty" class (always the last index).
 receiver = load_dataset("data/scenes_v1", "train", view="cell_classification")
 receiver.num_classes("shape")   # |shapes| + 1
+
+# Receiver (any layout, incl. free placement): CenterNet-style dense targets
+# -> (scene, {"heatmap": (H/4, W/4), "shape": Long(H/4 * W/4), ...})
+# Gaussian bumps at object centroids; attribute labels at centroid cells,
+# -1 elsewhere (use F.cross_entropy(..., ignore_index=-1)).
+receiver = load_dataset("data/scenes_v1", "train", view="centroid_heatmap")
 ```
 
 `cell_classification` labels are row-major over the label grid (same indexing
 as `target_cell`) and require a `fix_to_grid=True` dataset (one object per
-cell, so labels are unambiguous). Both views collate under the default
-DataLoader collate. With `stratify_targets=True` the crop view is exactly
-class-balanced.
+cell, so labels are unambiguous); `centroid_heatmap` works on any layout. All
+views collate under the default DataLoader collate. With
+`stratify_targets=True` the crop view is exactly class-balanced.
 
 CLI:
 
@@ -74,6 +80,14 @@ python -m scene_generator --config cfg.yaml --preview preview.png   # eyeball sc
 
 - **Target uniqueness** — no distractor matches the target's (shape, color,
   size-bin) tuple; distractors may duplicate each other.
+- **Cycled hard negatives** — under `distractor_policy="hard_negative"` the
+  flipped attribute cycles across a scene's hard negatives, so with
+  `n_hard_negatives >=` the number of flippable attributes NO single attribute
+  identifies the target: the emergent protocol must be compositional.
+- **Size-aware crops** — `crop_mode="fixed_window"` crops a fixed
+  `crop_window`px window centered on the target (default `1.4 * max size`) so
+  relative size survives; the default `"tight"` mode normalizes size away and
+  `validate()` warns if it is combined with `size="variable"`.
 - **Feasibility validation** — `SceneConfig.validate()` raises `FeasibilityError`
   when |shapes|·|colors|·|size-bins| < max K, when the grid can't hold K objects,
   or when a color is invisible against the background.

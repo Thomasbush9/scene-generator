@@ -19,6 +19,7 @@ from .config import PALETTE, FeasibilityError, SceneConfig
 from .dataset import (
     DATASET_VIEWS,
     CellClassificationDataset,
+    CentroidHeatmapDataset,
     CropClassificationDataset,
     EggSceneDataset,
     SceneDataset,
@@ -38,6 +39,7 @@ __all__ = [
     "EggSceneDataset",
     "CropClassificationDataset",
     "CellClassificationDataset",
+    "CentroidHeatmapDataset",
     "load_dataset",
     "DATASET_VIEWS",
     "collate_scenes",

@@ -89,8 +89,15 @@ class SceneConfig:
     # --- Sender input ---
     crop_size: int = 64
     """Target crops are resized to (crop_size, crop_size) for batching."""
+    crop_mode: Literal["tight", "fixed_window"] = "tight"
+    """tight: bbox + crop_pad resized to crop_size — destroys absolute size
+    (fine when size is constant). fixed_window: a fixed crop_window x
+    crop_window px window centered on the target, so relative size survives
+    in the crop. Required whenever size is a distinguishing attribute."""
+    crop_window: float | None = None
+    """Window extent (px) for crop_mode="fixed_window". None -> 1.4 * max size."""
     crop_pad: float = 2.0
-    """Padding (px) around the target bbox when cropping."""
+    """Padding (px) around the target bbox when cropping (crop_mode="tight")."""
 
     palette: dict[str, tuple[int, int, int]] | None = None
     """Extra/overriding color definitions merged over the default PALETTE."""
@@ -137,6 +144,10 @@ class SceneConfig:
         if self.fix_to_grid:
             return 0.7 * min(self.cell_hw)
         return min(self.canvas_hw) / 7.0
+
+    @property
+    def effective_crop_window(self) -> float:
+        return float(self.crop_window) if self.crop_window is not None else 1.4 * self.max_size
 
     @property
     def max_size(self) -> float:
@@ -196,6 +207,22 @@ class SceneConfig:
         h, w = self.canvas_hw
         if self.max_size > min(h, w) / 2:
             raise FeasibilityError(f"Max object size {self.max_size:.1f}px too large for canvas {h}x{w}")
+
+        if self.crop_mode == "fixed_window":
+            if self.effective_crop_window < self.max_size:
+                raise FeasibilityError(
+                    f"crop_window {self.effective_crop_window:.1f}px smaller than the max "
+                    f"object size {self.max_size:.1f}px — the largest objects would be clipped"
+                )
+        if self.size == "variable" and self.crop_mode == "tight":
+            import warnings
+
+            warnings.warn(
+                'size == "variable" with crop_mode == "tight": tight crops are resized to '
+                "crop_size, so the Sender cannot perceive object size. Use "
+                'crop_mode="fixed_window" if size should be communicable.',
+                stacklevel=2,
+            )
 
         # Visibility: every allowed color must contrast with the background.
         bg = self.background_rgb

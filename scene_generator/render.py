@@ -100,16 +100,27 @@ class Renderer:
 
         images: (B, 3, H, W); bboxes: (B, 4) pixel xyxy. Returns
         (B, 3, crop_size, crop_size).
+
+        crop_mode="tight": bbox + crop_pad, clamped to the canvas, resized —
+        absolute size is normalized away. crop_mode="fixed_window": a
+        crop_window-sized box centered on the target, NOT clamped (clamping
+        would change the scale for near-edge targets); the out-of-canvas
+        region samples as zeros, i.e. black background.
         """
         from torchvision.ops import roi_align
 
         cfg = self.config
         h, w = cfg.canvas_hw
         boxes = bboxes.to(images.device, torch.float32).clone()
-        boxes[:, :2] -= cfg.crop_pad
-        boxes[:, 2:] += cfg.crop_pad
-        boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
-        boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
+        if cfg.crop_mode == "fixed_window":
+            centers = (boxes[:, :2] + boxes[:, 2:]) / 2.0
+            half = cfg.effective_crop_window / 2.0
+            boxes = torch.cat([centers - half, centers + half], dim=1)
+        else:
+            boxes[:, :2] -= cfg.crop_pad
+            boxes[:, 2:] += cfg.crop_pad
+            boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
+            boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
         idx = torch.arange(len(boxes), dtype=torch.float32, device=images.device).unsqueeze(1)
         rois = torch.cat([idx, boxes], dim=1)
         return roi_align(images, rois, output_size=cfg.crop_size, aligned=True)

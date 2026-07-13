@@ -189,11 +189,65 @@ class CellClassificationDataset(_ClassificationDataset):
         return s["scene"], labels
 
 
+class CentroidHeatmapDataset(_ClassificationDataset):
+    """(scene, targets) view for pretraining a scene encoder on ANY layout.
+
+    CenterNet-style dense targets on a stride-downsampled grid (H/s, W/s):
+
+    * ``targets["heatmap"]`` — float (H/s, W/s), max of per-object Gaussians
+      centered on each object's centroid (peak 1.0, sigma ~ object size / 4).
+    * ``targets[attr]``      — long (H/s * W/s,), the attribute class at cells
+      containing an object centroid and ``-1`` everywhere else (row-major).
+
+    Typical losses: MSE / focal on the heatmap, and
+    ``F.cross_entropy(logits, targets[attr], ignore_index=-1)`` per attribute.
+
+    Unlike ``CellClassificationDataset`` this needs no grid layout: any two
+    non-overlapping objects' centroids land in distinct stride cells, so the
+    labels are always unambiguous. Use it as the Receiver pretext task for
+    free-placement datasets.
+    """
+
+    def __init__(self, root, split: str = "train", attributes=("shape", "color"),
+                 stride: int = 4):
+        super().__init__(root, split, attributes)
+        self.stride = int(stride)
+        h, w = self.config.canvas_hw
+        self.grid_hw = (h // self.stride, w // self.stride)
+        gy, gx = self.grid_hw
+        ys = (torch.arange(gy, dtype=torch.float32) + 0.5) * self.stride
+        xs = (torch.arange(gx, dtype=torch.float32) + 0.5) * self.stride
+        self._Y, self._X = torch.meshgrid(ys, xs, indexing="ij")  # px coords
+
+    def _center_cell(self, cx: float, cy: float) -> int:
+        gy, gx = self.grid_hw
+        r = min(int(cy / self.stride), gy - 1)
+        c = min(int(cx / self.stride), gx - 1)
+        return r * gx + c
+
+    def __getitem__(self, index: int):
+        s = super().__getitem__(index)
+        gy, gx = self.grid_hw
+        heat = torch.zeros(gy, gx)
+        labels = {a: torch.full((gy * gx,), -1, dtype=torch.long) for a in self.attributes}
+        for o in s["objects"]:
+            x0, y0, x1, y1 = o["bbox"]
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            sigma = max(o["size"] / 4.0, float(self.stride))
+            g = torch.exp(-((self._X - cx) ** 2 + (self._Y - cy) ** 2) / (2.0 * sigma**2))
+            heat = torch.maximum(heat, g)
+            cell = self._center_cell(cx, cy)
+            for a in self.attributes:
+                labels[a][cell] = self._index[a][o[a]]
+        return s["scene"], {"heatmap": heat, **labels}
+
+
 DATASET_VIEWS = {
     "scene": SceneDataset,                          # spec-schema dicts
     "egg": EggSceneDataset,                         # the communication game
     "crop_classification": CropClassificationDataset,  # Sender vision pretraining
-    "cell_classification": CellClassificationDataset,  # Receiver vision pretraining
+    "cell_classification": CellClassificationDataset,  # Receiver pretraining (grid layouts)
+    "centroid_heatmap": CentroidHeatmapDataset,        # Receiver pretraining (any layout)
 }
 
 

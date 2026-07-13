@@ -8,7 +8,9 @@ Correctness guarantees enforced here:
     (shape, color, size-bin) tuple; distractors may duplicate each other.
   * **Hard negatives** — under ``distractor_policy="hard_negative"``, the
     first ``n_hard_negatives`` distractors share all-but-one attribute with
-    the target.
+    the target, and the flipped attribute CYCLES across them (shuffled order).
+    With n_hard_negatives >= the number of flippable attributes, no single
+    attribute ever identifies the target — messages must be compositional.
   * **Balanced marginals** — attributes are sampled uniformly and
     independently; positions uniformly (over the canvas or over grid cells).
     With ``stratify_targets=True`` target combos are cycled through shuffled
@@ -132,10 +134,22 @@ class SceneSampler:
             self.rng.shuffle(self._target_cycle)
         return self._target_cycle.pop()
 
-    def _hard_negative_combo(self, target: Combo) -> Combo:
-        """A combo sharing all-but-one attribute with the target."""
-        dims = [d for d in range(3) if len({c[d] for c in self.object_combos}) > 1]
+    def _flippable_dims(self) -> list[int]:
+        """Attribute dimensions with >1 value in this split's lattice."""
+        return [d for d in range(3) if len({c[d] for c in self.object_combos}) > 1]
+
+    def _hard_negative_combo(self, target: Combo, prefer_dim: int | None = None) -> Combo:
+        """A combo sharing all-but-one attribute with the target.
+
+        ``prefer_dim`` requests which attribute to flip; the other dims serve
+        as fallback when the split's lattice has no neighbor along it (can
+        happen under aggressive holdout).
+        """
+        dims = self._flippable_dims()
         self.rng.shuffle(dims)
+        if prefer_dim in dims:
+            dims.remove(prefer_dim)
+            dims.insert(0, prefer_dim)
         for dim in dims:
             values = sorted({c[dim] for c in self.object_combos} - {target[dim]})
             self.rng.shuffle(values)
@@ -212,7 +226,16 @@ class SceneSampler:
         combos = [target]
         n_hard = cfg.n_hard_negatives if cfg.distractor_policy == "hard_negative" else 0
         n_hard = min(n_hard, k - 1)
-        combos += [self._hard_negative_combo(target) for _ in range(n_hard)]
+        if n_hard:
+            # Cycle the flipped attribute over the scene's hard negatives so
+            # they cover distinct dimensions: with enough negatives, naming a
+            # single attribute never suffices to identify the target.
+            flip = self._flippable_dims()
+            self.rng.shuffle(flip)
+            combos += [
+                self._hard_negative_combo(target, flip[i % len(flip)] if flip else None)
+                for i in range(n_hard)
+            ]
         combos += [self._iid_distractor_combo(target) for _ in range(k - 1 - n_hard)]
 
         # Shuffle so the target's index carries no information.
